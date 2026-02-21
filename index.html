@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>dj rt</title>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;700&display=swap" rel="stylesheet" />
+<style>
+  body { margin: 0; overflow: hidden; font-family: "Roboto Condensed", sans-serif; }
+  #gameContainer {
+    position: relative; width: 100vw; height: 100vh;
+    background: url("images/background.png") repeat-y center top;
+    background-size: cover;
+  }
+  #task { position: absolute; top: 20px; width: 100%; text-align: center; font-size: 35px; color: white; text-shadow: 0 0 5px black; z-index: 20; }
+  #counters { position: absolute; top: 20px; right: 50px; display: flex; gap: 20px; background: rgba(0,0,0,0.4); backdrop-filter: blur(8px); border-radius: 20px; padding: 15px 25px; z-index: 20; }
+  .counter { font-size: 35px; font-weight: bold; }
+  .correct { color: #00ff88; }
+  .mistake { color: #c080ff; }
+  #finalImage {
+    position: absolute; top: 110px; left: 50%; transform: translateX(-50%);
+    width: 130px; z-index: 5; transition: filter 0.4s ease;
+  }
+  .pulseGold { animation: pulseGlow 1.2s ease-in-out infinite; filter: drop-shadow(0 0 18px rgba(255,215,0,0.9)); }
+  @keyframes pulseGlow {
+    0% { transform: translateX(-50%) scale(1); filter: drop-shadow(0 0 8px rgba(255,215,0,0.6)); }
+    50% { transform: translateX(-50%) scale(1.06); filter: drop-shadow(0 0 22px rgba(255,215,0,1)); }
+    100% { transform: translateX(-50%) scale(1); filter: drop-shadow(0 0 8px rgba(255,215,0,0.6)); }
+  }
+  .platform {
+    position: absolute; width: 150px; text-align: center; font-size: 30px; font-weight: 600;
+    color: white; text-shadow: 0 0 4px black; cursor: pointer; transition: transform 0.15s ease;
+  }
+  .platform:hover { transform: scale(1.04); }
+  .wordLabel { font-size: 28px; position: absolute; text-align: center; color: white; text-shadow: 0 0 3px black; font-weight: 700; width: 150px; pointer-events: none; }
+  #character {
+    position: absolute; width: 100px; height: auto; z-index: 10; will-change: transform, left, bottom;
+    transition: left 0.45s cubic-bezier(.22,.98,.34,1), bottom 0.45s cubic-bezier(.22,.98,.34,1);
+    transform-origin: center;
+  }
+  .flashGold, .flashMistake {
+    position: absolute; border-radius: 50%; opacity: 0;
+  }
+  .flashGold { width: 100px; height: 100px; background: radial-gradient(circle, gold, transparent); animation: flashGoldAnim 0.6s forwards; }
+  .flashMistake { width: 140px; height: 140px; background: radial-gradient(circle, rgba(0,0,0,0.65), transparent); animation: flashMistakeAnim 2.2s forwards; }
+  @keyframes flashGoldAnim { 0% { opacity: 1; transform: scale(0.5); } 100% { opacity: 0; transform: scale(2); } }
+  @keyframes flashMistakeAnim { 0% { opacity: 0.7; transform: scale(0.4); } 100% { opacity: 0; transform: scale(2.8); } }
+  #overlay {
+    position: absolute; width: 100%; height: 100%; top: 0; left: 0;
+    background: rgba(0,0,0,0.6); backdrop-filter: blur(5px); display: flex; justify-content: center;
+    align-items: center; flex-direction: column; color: white; font-size: 48px; display: none; z-index: 200;
+  }
+  #overlay span { margin-top: 20px; font-size: 26px; color: #ffd700; cursor: pointer; }
+  canvas#confetti { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 150; }
+</style>
+</head>
+<body>
+<div id="gameContainer">
+  <div id="task">The country mouse doesn't want...".
+</div>
+  <div id="counters">
+    <div class="counter correct" id="correctCount">0</div>
+    <div class="counter mistake" id="mistakeCount">0</div>
+  </div>
+  <img id="finalImage" src="images/gift.png" />
+  <img id="character" src="images/hero.png" style="left:48%; bottom:40px;" />
+  <canvas id="confetti"></canvas>
+  <div id="overlay"><div id="overlayText"></div><span id="restartBtn">Try again?</span></div>
+</div>
+<script>
+const correctWords = ["the dog", "the town", "the big house", "lots of food", "burgers"];
+const wrongWords = ["honey", "bread", "the country", "cheese"];
+
+let uniqueWords = [...correctWords];
+while(uniqueWords.length < 9){
+  const randWrong = wrongWords[Math.floor(Math.random()*wrongWords.length)];
+  if(!uniqueWords.includes(randWrong)) uniqueWords.push(randWrong);
+}
+
+let allWords = uniqueWords.sort(() => Math.random() - 0.5);
+
+const platformImages = [
+  "images/1.png",
+  "images/2.png",
+  "images/3.png"
+];
+const container = document.getElementById("gameContainer");
+const character = document.getElementById("character");
+const correctCountEl = document.getElementById("correctCount");
+const mistakeCountEl = document.getElementById("mistakeCount");
+const overlay = document.getElementById("overlay");
+const overlayText = document.getElementById("overlayText");
+const restartBtn = document.getElementById("restartBtn");
+const finalImage = document.getElementById("finalImage");
+const confettiCanvas = document.getElementById("confetti");
+const ctx = confettiCanvas.getContext("2d");
+let correct = 0, mistakes = 0, platforms = [], canClick = true, lastColumn = null, isJumping = false, lastCorrectPlatform = null;
+
+function resizeConfetti() { confettiCanvas.width = window.innerWidth; confettiCanvas.height = window.innerHeight; }
+window.addEventListener("resize", resizeConfetti); resizeConfetti();
+
+function createPlatforms() {
+  const screenW = window.innerWidth;
+  const screenH = window.innerHeight;
+  const topMargin = 180;
+  const bottomMargin = 150;
+  const usableH = screenH - topMargin - bottomMargin;
+  const stepY = Math.max(45, Math.floor(usableH / 9));
+  for (let i = 0; i < 9; i++) {
+    const word = allWords[i];
+    const img = document.createElement("img");
+    img.src = platformImages[i % platformImages.length];
+    img.classList.add("platform");
+    const isLeft = i % 2 === 0;
+    const colX = isLeft ? screenW * 0.2 : screenW * 0.6;
+    const randomShift = (Math.random() - 0.5) * 40;
+    const left = Math.round(colX + randomShift);
+    const bottom = Math.round(bottomMargin + i * stepY);
+    img.style.left = `${left}px`;
+    img.style.bottom = `${bottom}px`;
+    img.dataset.word = word;
+    img.dataset.clicked = "false";
+    img.dataset.column = isLeft ? "left" : "right";
+    container.appendChild(img);
+    platforms.push(img);
+    const label = document.createElement("div");
+    label.classList.add("wordLabel");
+    label.textContent = word;
+    label.style.left = `${left}px`;
+    label.style.bottom = `${bottom + 38}px`;
+    container.appendChild(label);
+  }
+}
+createPlatforms();
+
+function flashGold(x,y){const f=document.createElement("div");f.className="flashGold";f.style.left=`${x}px`;f.style.top=`${y}px`;container.appendChild(f);setTimeout(()=>f.remove(),700);}
+function flashMistake(x,y){const f=document.createElement("div");f.className="flashMistake";f.style.left=`${x}px`;f.style.top=`${y}px`;container.appendChild(f);setTimeout(()=>f.remove(),2400);}
+
+function jumpArc(fromX,fromBottom,toX,toBottom,duration=500,onProgress=null){
+  if(isJumping)return Promise.resolve();
+  isJumping=true;
+  return new Promise(resolve=>{
+    const start=performance.now();
+    const arcHeight=Math.max(60,Math.abs(toBottom-fromBottom)+80);
+    function frame(now){
+      const t=Math.min(1,(now-start)/duration);
+      const parabola=(1-Math.pow(2*t-1,2))*arcHeight;
+      const curX=fromX+(toX-fromX)*t;
+      const curBottom=fromBottom+(toBottom-fromBottom)*t+parabola-arcHeight/3;
+      character.style.left=`${Math.round(curX)}px`;
+      character.style.bottom=`${Math.round(curBottom)}px`;
+      if(onProgress)onProgress(t);
+      if(t<1)requestAnimationFrame(frame);
+      else{setTimeout(()=>{isJumping=false;resolve();},30);}
+    }
+    requestAnimationFrame(frame);
+  });
+}
+function getCharPos(){const s=window.getComputedStyle(character);return{left:parseFloat(s.left)||0,bottom:parseFloat(s.bottom)||40};}
+async function jumpTo(platformEl,correctChoice){
+  if(isJumping)return;
+  const rect=platformEl.getBoundingClientRect();
+  const containerRect=container.getBoundingClientRect();
+  const targetX=Math.round(rect.left-containerRect.left+rect.width/2-character.offsetWidth/2);
+  const targetBottom=Math.round(containerRect.height-(rect.top-containerRect.top)-rect.height+10);
+  const column=platformEl.dataset.column;
+  if(lastColumn===null)lastColumn=column;
+  if(column!==lastColumn){
+    if(column==="right")character.style.transform="scaleX(-1)";
+    else character.style.transform="scaleX(1)";
+    lastColumn=column;
+  }
+  const cur=getCharPos();
+  await jumpArc(cur.left,cur.bottom,targetX,targetBottom,550);
+  startIdleWobble();
+  if(correctChoice){flashGold(targetX,containerRect.height-targetBottom-100);lastCorrectPlatform=platformEl;}
+  else{flashMistake(targetX,containerRect.height-targetBottom-80);await fallBack();}
+}
+function fallBack(){
+  if(!lastCorrectPlatform)return;
+  const rect=lastCorrectPlatform.getBoundingClientRect();
+  const containerRect=container.getBoundingClientRect();
+  const targetX=Math.round(rect.left-containerRect.left+rect.width/2-character.offsetWidth/2);
+  const targetBottom=Math.round(containerRect.height-(rect.top-containerRect.top)-rect.height+10);
+  const cur=getCharPos();
+  return jumpArc(cur.left,cur.bottom,targetX,targetBottom,600);
+}
+let wobbleTimer=null;
+function startIdleWobble(){
+  if(wobbleTimer)clearInterval(wobbleTimer);
+  const base=parseFloat(getComputedStyle(character).bottom)||40;let step=0;
+  wobbleTimer=setInterval(()=>{
+    step++;const offset=Math.sin(step/8)*6;
+    character.style.bottom=`${Math.round(base+offset)}px`;
+    if(step>24){clearInterval(wobbleTimer);wobbleTimer=null;character.style.bottom=`${base}px`;}
+  },70);
+}
+function handleClick(e){
+  if(!canClick)return;
+  const platformEl=e.currentTarget;
+  const word=platformEl.dataset.word;
+  if(platformEl.dataset.clicked==="true")return;
+  platformEl.dataset.clicked="true";
+  const isCorrect=correctWords.includes(word);
+  if(isCorrect){
+    correct++;correctCountEl.textContent=correct;
+    jumpTo(platformEl,true).then(()=>{
+      if(correct===correctWords.length){
+        finalImage.classList.add("pulseGold");
+        finalImage.onclick=()=>{fireConfetti();overlay.style.display="flex";overlayText.textContent="Well done!";restartBtn.textContent="Again?";};
+      }
+    });
+  } else {
+    mistakes++;mistakeCountEl.textContent=mistakes;
+    jumpTo(platformEl,false);
+    if(mistakes>=3)setTimeout(gameOver,600);
+  }
+}
+function gameOver(){overlay.style.display="flex";overlayText.textContent="Game over";restartBtn.textContent="Попробовать снова?";}
+function attachPlatformListeners(){platforms.forEach(p=>p.addEventListener("click",handleClick));}
+attachPlatformListeners();
+let confettis=[];
+function fireConfetti(){for(let i=0;i<200;i++){confettis.push({x:Math.random()*confettiCanvas.width,y:Math.random()*confettiCanvas.height*0.2,r:Math.random()*6+2,dx:(Math.random()-0.5)*2,dy:2+Math.random()*4,angle:Math.random()*Math.PI*2,color:`hsl(${Math.random()*360},100%,50%)`});}}
+function drawConfetti(){
+  ctx.clearRect(0,0,confettiCanvas.width,confettiCanvas.height);
+  for(let i=confettis.length-1;i>=0;i--){
+    const c=confettis[i];c.x+=c.dx;c.y+=c.dy;c.angle+=0.1;
+    ctx.save();ctx.translate(c.x,c.y);ctx.rotate(c.angle);ctx.fillStyle=c.color;ctx.fillRect(-c.r/2,-c.r/2,c.r,c.r);ctx.restore();
+    if(c.y>confettiCanvas.height+50)confettis.splice(i,1);
+  }
+  requestAnimationFrame(drawConfetti);
+}
+drawConfetti();
+(function initPos(){
+  const bottoms=platforms.map(p=>parseFloat(p.style.bottom||40));
+  const minBottom=Math.min(...bottoms,40);
+  const startBottom=Math.max(40,minBottom-80);
+  character.style.left=`${Math.round(window.innerWidth*0.48)}px`;
+  character.style.bottom=`${startBottom}px`;
+})(); 
+restartBtn.addEventListener("click",()=>location.reload());
+
+(function() {
+  const mark = "cmFkaWF0ZWFjaGVy";
+  const check = mark.split('').reduce((a,b)=>a+b.charCodeAt(0),0);
+})();
+</script>
+</body>
+</html>
